@@ -1,65 +1,205 @@
 import os
+import logging
+from typing import List, Optional
 from google import genai
 
-# 1. Configuración de la API de Gemini
+# Configuración de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configuración de la API de Gemini
 # Asegúrate de exportar tu llave en la terminal: export GEMINI_API_KEY="tu_clave_aqui"
-client = genai.Client()
+try:
+    client = genai.Client()
+    logger.info("Cliente de Gemini inicializado correctamente")
+except Exception as e:
+    logger.error(f"Error al inicializar el cliente de Gemini: {e}")
+    client = None
 
-def calcular_vpn(inversion_inicial, flujos_anuales, tasa_descuento):
-    """Calcula el Valor Presente Neto (VPN) localmente"""
-    vpn = -inversion_inicial
-    for t, flujo in enumerate(flujos_anuales, start=1):
-        vpn += flujo / ((1 + tasa_descuento) ** t)
-    return vpn
+# Constantes
+MODEL_NAME = 'gemini-2.5-flash'
+DEFAULT_DISCOUNT_RATE = 0.12
+DEFAULT_INVESTMENT = 150000
 
-def obtener_analisis_gemini(vpn, inversion, flujos, tasa):
-    """Conecta con Gemini para obtener el análisis consultivo de ingeniería"""
-    
-    # Construcción del Prompt Técnico
-    prompt = f"""
-    Actúa como un Consultor Senior de Ingeniería Económica y Gestión de Proyectos.
-    Se ha evaluado un proyecto de infraestructura con los siguientes datos financieros:
-    - Inversión Inicial: ${inversion:,} USD
-    - Flujos de Efectivo Anuales Estimados: {flujos} USD
-    - Tasa de Descuento aplicada: {tasa * 100}%
-    - Valor Presente Neto (VPN) calculado: ${vpn:,.2f} USD
 
-    Por favor, genera un informe ejecutivo que incluya de forma obligatoria:
-    1. DIAGNÓSTICO FINANCIERO: Explicación de qué significa este VPN para los inversionistas (¿Se acepta o se rechaza el proyecto?).
-    2. ANÁLISIS DE RIESGOS: Cuáles son los 3 principales riesgos operativos o de mercado comunes en proyectos de ingeniería que podrían afectar estos flujos.
-    3. RECOMENDACIONES ESTRATÉGICAS: Acciones concretas que los ingenieros a cargo deben tomar para mitigar riesgos y asegurar el éxito del proyecto.
-    
-    Sé conciso, profesional y directo al grano.
+def validar_entradas(inversion_inicial: float, flujos_anuales: List[float], tasa_descuento: float) -> bool:
     """
+    Valida que los datos de entrada sean válidos.
     
-    # Llamada a la API usando el modelo estándar recomendado flash
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt
-    )
-    return response.text
+    Args:
+        inversion_inicial: Inversión inicial en USD
+        flujos_anuales: Lista de flujos de efectivo anuales
+        tasa_descuento: Tasa de descuento (ej: 0.12 para 12%)
+        
+    Returns:
+        bool: True si los datos son válidos
+        
+    Raises:
+        ValueError: Si los parámetros son inválidos
+    """
+    if not isinstance(inversion_inicial, (int, float)) or inversion_inicial <= 0:
+        raise ValueError("La inversión inicial debe ser un número positivo")
+    
+    if not isinstance(flujos_anuales, (list, tuple)) or len(flujos_anuales) == 0:
+        raise ValueError("Los flujos deben ser una lista no vacía")
+    
+    if not all(isinstance(f, (int, float)) for f in flujos_anuales):
+        raise ValueError("Todos los flujos deben ser números")
+    
+    if not isinstance(tasa_descuento, (int, float)) or tasa_descuento <= -1:
+        raise ValueError("La tasa de descuento debe ser un número mayor a -1")
+    
+    return True
+
+
+def calcular_vpn(inversion_inicial: float, flujos_anuales: List[float], tasa_descuento: float) -> float:
+    """
+    Calcula el Valor Presente Neto (VPN) localmente.
+    
+    Args:
+        inversion_inicial: Inversión inicial en USD
+        flujos_anuales: Lista de flujos de efectivo anuales
+        tasa_descuento: Tasa de descuento (ej: 0.12 para 12%)
+        
+    Returns:
+        float: Valor Presente Neto calculado
+        
+    Raises:
+        ValueError: Si los parámetros son inválidos
+        ZeroDivisionError: Si la tasa de descuento es -1
+    """
+    try:
+        validar_entradas(inversion_inicial, flujos_anuales, tasa_descuento)
+        
+        vpn = -inversion_inicial
+        for t, flujo in enumerate(flujos_anuales, start=1):
+            vpn += flujo / ((1 + tasa_descuento) ** t)
+        
+        logger.info(f"VPN calculado correctamente: ${vpn:,.2f} USD")
+        return vpn
+        
+    except ValueError as e:
+        logger.error(f"Error de validación en calcular_vpn: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error inesperado en calcular_vpn: {e}")
+        raise
+
+
+def obtener_analisis_gemini(vpn: float, inversion: float, flujos: List[float], tasa: float) -> Optional[str]:
+    """
+    Conecta con Gemini para obtener el análisis consultivo de ingeniería.
+    
+    Args:
+        vpn: Valor Presente Neto calculado
+        inversion: Inversión inicial
+        flujos: Lista de flujos de efectivo anuales
+        tasa: Tasa de descuento
+        
+    Returns:
+        str: Análisis de Gemini o None si hay error
+    """
+    if client is None:
+        logger.error("Cliente de Gemini no está disponible")
+        return None
+    
+    try:
+        # Construcción del Prompt Técnico
+        flujos_str = ", ".join([f"${f:,.0f}" for f in flujos])
+        prompt = f"""
+        Actúa como un Consultor Senior de Ingeniería Económica y Gestión de Proyectos.
+        Se ha evaluado un proyecto de infraestructura con los siguientes datos financieros:
+        - Inversión Inicial: ${inversion:,.0f} USD
+        - Flujos de Efectivo Anuales Estimados: {flujos_str} USD
+        - Tasa de Descuento aplicada: {tasa * 100:.1f}%
+        - Valor Presente Neto (VPN) calculado: ${vpn:,.2f} USD
+
+        Por favor, genera un informe ejecutivo que incluya de forma obligatoria:
+        1. DIAGNÓSTICO FINANCIERO: Explicación de qué significa este VPN para los inversionistas (¿Se acepta o se rechaza el proyecto?).
+        2. ANÁLISIS DE RIESGOS: Cuáles son los 3 principales riesgos operativos o de mercado comunes en proyectos de ingeniería que podrían afectar estos flujos.
+        3. RECOMENDACIONES ESTRATÉGICAS: Acciones concretas que los ingenieros a cargo deben tomar para mitigar riesgos y asegurar el éxito del proyecto.
+        
+        Sé conciso, profesional y directo al grano.
+        """
+        
+        logger.info("Conectando con la API de Gemini...")
+        # Llamada a la API usando el modelo estándar recomendado flash
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
+        
+        if response and response.text:
+            logger.info("Análisis de Gemini obtenido exitosamente")
+            return response.text
+        else:
+            logger.warning("La respuesta de Gemini está vacía")
+            return None
+            
+    except ValueError as e:
+        logger.error(f"Error de validación en obtener_analisis_gemini: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error al conectar con la API de Gemini: {e}")
+        return None
+
 
 def main():
-    print("--- CONSULTOR DE VIABILIDAD DE PROYECTOS DE INGENIERÍA ---")
-    
-    # Simulación de datos de entrada (puedes cambiarlos por inputs si deseas)
-    inversion = 150000  # $150,000 USD
-    flujos = [40000, 50000, 60000, 60000, 70000]  # Proyección a 5 años
-    tasa = 0.12  # 12% de tasa de descuento
-    
-    print("\nCalculando variables financieras locales...")
-    vpn_resultado = calcular_vpn(inversion, flujos, tasa)
-    print(f"VPN Local Calculado: ${vpn_resultado:,.2f} USD")
-    
-    print("\nConectando con la API de Gemini para análisis cualitativo...\n")
+    """Función principal del consultor de viabilidad de proyectos"""
     try:
+        logger.info("=== INICIANDO CONSULTOR DE VIABILIDAD DE PROYECTOS ===")
+        
+        # Simulación de datos de entrada (puedes cambiarlos por inputs si deseas)
+        inversion = 150000  # $150,000 USD
+        flujos = [40000, 50000, 60000, 60000, 70000]  # Proyección a 5 años
+        tasa = 0.12  # 12% de tasa de descuento
+        
+        print("\n--- CONSULTOR DE VIABILIDAD DE PROYECTOS DE INGENIERÍA ---\n")
+        
+        # Validar entradas
+        try:
+            validar_entradas(inversion, flujos, tasa)
+            logger.info("Datos de entrada validados correctamente")
+        except ValueError as e:
+            logger.error(f"Datos de entrada inválidos: {e}")
+            print(f"❌ Error en los datos: {e}")
+            return
+        
+        # Calcular VPN
+        print("📊 Calculando variables financieras locales...")
+        vpn_resultado = calcular_vpn(inversion, flujos, tasa)
+        print(f"✓ VPN Local Calculado: ${vpn_resultado:,.2f} USD")
+        
+        # Determinar si es viable
+        if vpn_resultado > 0:
+            print(f"📈 Proyecto VIABLE (VPN positivo)")
+        elif vpn_resultado == 0:
+            print(f"⚖️  Proyecto INDIFERENTE (VPN = 0)")
+        else:
+            print(f"📉 Proyecto NO VIABLE (VPN negativo)")
+        
+        # Obtener análisis de Gemini
+        print("\n🤖 Conectando con la API de Gemini para análisis cualitativo...")
         reporte_ia = obtener_analisis_gemini(vpn_resultado, inversion, flujos, tasa)
-        print("================ INFORME CONSULTIVO DE LA IA ================")
-        print(reporte_ia)
-        print("=============================================================")
+        
+        if reporte_ia:
+            print("\n" + "="*60)
+            print("INFORME CONSULTIVO DE LA IA")
+            print("="*60)
+            print(reporte_ia)
+            print("="*60 + "\n")
+            logger.info("Proceso completado exitosamente")
+        else:
+            logger.warning("No se pudo obtener el análisis de Gemini")
+            print("\n⚠️  No se pudo obtener el análisis de Gemini. Verifica tu API key.")
+            
     except Exception as e:
-        print(error_msg := f"Error al conectar con la API de Gemini: {e}")
+        logger.error(f"Error crítico en main: {e}")
+        print(f"\n❌ Error: {e}")
+
 
 if __name__ == "__main__":
     main()
-
