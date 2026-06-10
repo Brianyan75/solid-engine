@@ -1,0 +1,65 @@
+import os
+from google import genai
+
+# 1. Configuración de la API de Gemini
+# Asegúrate de exportar tu llave en la terminal: export GEMINI_API_KEY="tu_clave_aqui"
+client = genai.Client()
+
+def calcular_vpn(inversion_inicial, flujos_anuales, tasa_descuento):
+    """Calcula el Valor Presente Neto (VPN) localmente"""
+    vpn = -inversion_inicial
+    for t, flujo in enumerate(flujos_anuales, start=1):
+        vpn += flujo / ((1 + tasa_descuento) ** t)
+    return vpn
+
+def obtener_analisis_gemini(vpn, inversion, flujos, tasa):
+    """Conecta con Gemini para obtener el análisis consultivo de ingeniería"""
+    
+    # Construcción del Prompt Técnico
+    prompt = f"""
+    Actúa como un Consultor Senior de Ingeniería Económica y Gestión de Proyectos.
+    Se ha evaluado un proyecto de infraestructura con los siguientes datos financieros:
+    - Inversión Inicial: ${inversion:,} USD
+    - Flujos de Efectivo Anuales Estimados: {flujos} USD
+    - Tasa de Descuento aplicada: {tasa * 100}%
+    - Valor Presente Neto (VPN) calculado: ${vpn:,.2f} USD
+
+    Por favor, genera un informe ejecutivo que incluya de forma obligatoria:
+    1. DIAGNÓSTICO FINANCIERO: Explicación de qué significa este VPN para los inversionistas (¿Se acepta o se rechaza el proyecto?).
+    2. ANÁLISIS DE RIESGOS: Cuáles son los 3 principales riesgos operativos o de mercado comunes en proyectos de ingeniería que podrían afectar estos flujos.
+    3. RECOMENDACIONES ESTRATÉGICAS: Acciones concretas que los ingenieros a cargo deben tomar para mitigar riesgos y asegurar el éxito del proyecto.
+    
+    Sé conciso, profesional y directo al grano.
+    """
+    
+    # Llamada a la API usando el modelo estándar recomendado flash
+    response = client.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt
+    )
+    return response.text
+
+def main():
+    print("--- CONSULTOR DE VIABILIDAD DE PROYECTOS DE INGENIERÍA ---")
+    
+    # Simulación de datos de entrada (puedes cambiarlos por inputs si deseas)
+    inversion = 150000  # $150,000 USD
+    flujos = [40000, 50000, 60000, 60000, 70000]  # Proyección a 5 años
+    tasa = 0.12  # 12% de tasa de descuento
+    
+    print("\nCalculando variables financieras locales...")
+    vpn_resultado = calcular_vpn(inversion, flujos, tasa)
+    print(f"VPN Local Calculado: ${vpn_resultado:,.2f} USD")
+    
+    print("\nConectando con la API de Gemini para análisis cualitativo...\n")
+    try:
+        reporte_ia = obtener_analisis_gemini(vpn_resultado, inversion, flujos, tasa)
+        print("================ INFORME CONSULTIVO DE LA IA ================")
+        print(reporte_ia)
+        print("=============================================================")
+    except Exception as e:
+        print(error_msg := f"Error al conectar con la API de Gemini: {e}")
+
+if __name__ == "__main__":
+    main()
+
